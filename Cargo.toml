@@ -7,7 +7,7 @@ description = "A Rust implementation of mcpx, a CLI utility for Model Context Pr
 license = "MIT"
 repository = "https://github.com/benjamesmurray/mcpx-rust"
 readme = "README.md"
-keywords = ["mcp", "cli", "ai", "model-context-protocol"]
+keywords = ["mcp", "cli", "ai", "mcp-server"]
 categories = ["command-line-utilities"]
 
 [dependencies]
