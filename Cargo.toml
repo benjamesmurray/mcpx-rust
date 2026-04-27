@@ -1,0 +1,21 @@
+[package]
+name = "mcpx-rust"
+version = "0.1.0"
+edition = "2024"
+authors = ["Ben Murray"]
+description = "A Rust implementation of mcpx, a CLI utility for Model Context Protocol (MCP) servers"
+license = "MIT"
+repository = "https://github.com/benjamesmurray/mcpx-rust"
+readme = "README.md"
+keywords = ["mcp", "cli", "ai", "model-context-protocol"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+anyhow = "1.0.102"
+async-trait = "0.1.89"
+clap = { version = "4.6.1", features = ["derive"] }
+rust-mcp-sdk = "0.9.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.52.1", features = ["full"] }
+toml = "1.1.2"
