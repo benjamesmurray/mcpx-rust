@@ -2,7 +2,7 @@ mod config;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use rust_mcp_sdk::{
     mcp_client::{client_runtime, ClientHandler, McpClientOptions, ToMcpClientHandler},
     schema::*,
@@ -43,7 +43,28 @@ impl ClientHandler for MyClientHandler {}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let mut args: Vec<String> = std::env::args().collect();
+    let mut schema_mode = false;
+
+    let has_help = args.iter().any(|arg| arg == "--help" || arg == "-h");
+    let has_json = args.iter().any(|arg| arg == "--json");
+
+    if has_help && has_json {
+        schema_mode = true;
+        args.retain(|arg| arg != "--help" && arg != "-h");
+    }
+
+    let cli = match Cli::try_parse_from(&args) {
+        Ok(cli) => cli,
+        Err(e) => {
+            if schema_mode {
+                Cli::command().print_help()?;
+                return Ok(());
+            }
+            e.exit();
+        }
+    };
+
     let config = config::load_config().context("Failed to load configuration")?;
 
     match cli.command {
@@ -63,6 +84,16 @@ async fn main() -> Result<()> {
             .get(&server_name)
             .with_context(|| format!("Server '{}' not found in config", server_name))?
             .clone();
+
+        if schema_mode {
+            if let Some(tool_name) = cli.tool {
+                extract_schema(server_config, &tool_name).await?;
+                return Ok(());
+            } else {
+                Cli::command().print_help()?;
+                return Ok(());
+            }
+        }
 
         // Parse key=value arguments
         let mut tool_args = serde_json::Map::new();
@@ -90,39 +121,7 @@ async fn run_tool(
     arguments: serde_json::Map<String, serde_json::Value>,
     json_output: bool,
 ) -> Result<()> {
-    let client_details = InitializeRequestParams {
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "mcpx-rust".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
-            description: Some("MCPX rewrite in Rust".into()),
-            icons: vec![],
-            title: Some("MCPX Rust Client".into()),
-            website_url: None,
-        },
-        protocol_version: LATEST_PROTOCOL_VERSION.into(),
-        meta: None,
-    };
-
-    let transport = StdioTransport::create_with_server_launch(
-        &server_config.command,
-        server_config.args,
-        server_config.env,
-        TransportOptions::default(),
-    ).map_err(|e| anyhow::anyhow!("Failed to create transport: {}", e))?;
-
-    let handler = MyClientHandler {};
-
-    let client = client_runtime::create_client(McpClientOptions {
-        client_details,
-        transport,
-        handler: handler.to_mcp_client_handler(),
-        task_store: Some(Arc::new(InMemoryTaskStore::new(None))),
-        server_task_store: Some(Arc::new(InMemoryTaskStore::new(None))),
-        message_observer: None,
-    });
-
-    client.clone().start().await.map_err(|e| anyhow::anyhow!("Failed to start client: {}", e))?;
+    let client = connect_to_server(&server_config).await?;
 
     if let Some(name) = tool_name {
         let request = CallToolRequestParams {
@@ -173,4 +172,69 @@ async fn run_tool(
     client.shut_down().await.map_err(|e| anyhow::anyhow!("Failed to shut down client: {}", e))?;
 
     Ok(())
+}
+
+async fn extract_schema(
+    server_config: config::McpServerConfig,
+    tool_name: &str,
+) -> Result<()> {
+    let client = connect_to_server(&server_config).await?;
+
+    let tools = client
+        .request_tool_list(None)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to list tools: {}", e))?;
+
+    let tool = tools.tools.into_iter().find(|t| t.name == tool_name)
+        .with_context(|| format!("Tool '{}' not found on server", tool_name))?;
+
+    let output = serde_json::json!({
+        "input_schema": tool.input_schema
+    });
+
+    println!("{}", serde_json::to_string_pretty(&output)?);
+
+    client.shut_down().await.map_err(|e| anyhow::anyhow!("Failed to shut down client: {}", e))?;
+
+    Ok(())
+}
+
+async fn connect_to_server(
+    server_config: &config::McpServerConfig,
+) -> Result<Arc<mcp_client::ClientRuntime>> {
+    let client_details = InitializeRequestParams {
+        capabilities: ClientCapabilities::default(),
+        client_info: Implementation {
+            name: "mcpx-rust".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            description: Some("MCPX rewrite in Rust".into()),
+            icons: vec![],
+            title: Some("MCPX Rust Client".into()),
+            website_url: None,
+        },
+        protocol_version: LATEST_PROTOCOL_VERSION.into(),
+        meta: None,
+    };
+
+    let transport = StdioTransport::create_with_server_launch(
+        &server_config.command,
+        server_config.args.clone(),
+        server_config.env.clone(),
+        TransportOptions::default(),
+    ).map_err(|e| anyhow::anyhow!("Failed to create transport: {}", e))?;
+
+    let handler = MyClientHandler {};
+
+    let client = client_runtime::create_client(McpClientOptions {
+        client_details,
+        transport,
+        handler: handler.to_mcp_client_handler(),
+        task_store: Some(Arc::new(InMemoryTaskStore::new(None))),
+        server_task_store: Some(Arc::new(InMemoryTaskStore::new(None))),
+        message_observer: None,
+    });
+
+    client.clone().start().await.map_err(|e| anyhow::anyhow!("Failed to start client: {}", e))?;
+
+    Ok(client)
 }
