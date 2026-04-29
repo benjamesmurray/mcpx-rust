@@ -12,7 +12,13 @@ use rust_mcp_sdk::{
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    author,
+    version,
+    about,
+    long_about = None,
+    override_usage = "mcpx-rust [OPTIONS] [SERVER] [TOOL] [ARGS]... [COMMAND]\n\nTo list tools for a server, use: mcpx-rust <SERVER>"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -52,6 +58,20 @@ async fn main() -> Result<()> {
     if has_help && has_json {
         schema_mode = true;
         args.retain(|arg| arg != "--help" && arg != "-h");
+    }
+
+    // Help Forwarding for Servers
+    if !schema_mode {
+        let has_help_flag_or_cmd = args.iter().any(|arg| arg == "--help" || arg == "-h" || arg == "help");
+        if has_help_flag_or_cmd {
+            let positionals: Vec<_> = args.iter().skip(1).filter(|a| !a.starts_with('-')).collect();
+            let non_help_positionals: Vec<_> = positionals.iter().filter(|&&a| a != "help").collect();
+
+            // If exactly one positional (the server) and it's not the "list" command
+            if non_help_positionals.len() == 1 && non_help_positionals[0].as_str() != "list" {
+                args.retain(|arg| arg != "--help" && arg != "-h" && arg != "help");
+            }
+        }
     }
 
     let cli = match Cli::try_parse_from(&args) {

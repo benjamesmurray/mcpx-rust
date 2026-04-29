@@ -37,14 +37,22 @@ You can also use the `MCPX_CONFIG` environment variable to point to a different 
 
 ## Usage
 
+```bash
+Usage: mcpx-rust [OPTIONS] [SERVER] [TOOL] [ARGS]... [COMMAND]
+
+To list tools for a server, use: mcpx-rust <SERVER>
+```
+
 ### List configured servers
 ```bash
 mcpx-rust list
 ```
 
-### List tools for a server
+### List tools for a server (Discovery)
 ```bash
 mcpx-rust <server_name>
+# OR
+mcpx-rust <server_name> --help
 ```
 
 ### Call a tool
