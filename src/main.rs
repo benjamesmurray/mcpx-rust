@@ -207,9 +207,9 @@ async fn connect_to_server(
         client_info: Implementation {
             name: "mcpx-rust".into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            description: Some("MCPX rewrite in Rust".into()),
+            description: None,
             icons: vec![],
-            title: Some("MCPX Rust Client".into()),
+            title: None,
             website_url: None,
         },
         protocol_version: LATEST_PROTOCOL_VERSION.into(),

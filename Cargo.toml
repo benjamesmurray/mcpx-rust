@@ -1,6 +1,6 @@
 [package]
 name = "mcpx-rust"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 authors = ["Ben Murray"]
 description = "A Rust implementation of mcpx, a CLI utility for Model Context Protocol (MCP) servers"
