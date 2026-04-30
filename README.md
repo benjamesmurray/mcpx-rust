@@ -59,12 +59,23 @@ mcpx-rust <server_name> --help
 ```bash
 mcpx-rust <server_name> <tool_name> [args...]
 ```
-Arguments are passed as `key=value` pairs. Values are automatically parsed as JSON (numbers, booleans, etc.) if possible, otherwise they are treated as strings.
+`mcpx-rust` supports multiple argument formats and automatically normalizes them based on the server's JSON Schema:
+
+- **GNU-style flags**: `--key value` or `--flag`
+- **Key-Value pairs**: `key=value`
+- **JSON coercion**: Values like `true`, `false`, and numbers are automatically converted to their JSON primitives.
+- **Flat Server Support**: Automatically detects servers that expect a flat list of arguments (like `args: ["key=value"]`) and maps your flags accordingly.
 
 Example:
 ```bash
+# Using flags
+mcpx-rust spec sc_init --name iot-hub --recursive
+
+# Using key=value pairs
 mcpx-rust everything echo message="Hello from Rust"
 ```
+
+To improve performance, `mcpx-rust` caches tool schemas locally in `~/.cache/mcpx-rust/`.
 
 ### JSON output
 ```bash
