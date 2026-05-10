@@ -63,6 +63,7 @@ mcpx-rust <server_name> <tool_name> [args...]
 
 - **GNU-style flags**: `--key value` or `--flag`
 - **Key-Value pairs**: `key=value`
+- **Positional arguments**: Passed to the tool as a list (useful for servers that handle unstructured input or for extra validation).
 - **JSON coercion**: Values like `true`, `false`, and numbers are automatically converted to their JSON primitives.
 - **Flat Server Support**: Automatically detects servers that expect a flat list of arguments (like `args: ["key=value"]`) and maps your flags accordingly.
 

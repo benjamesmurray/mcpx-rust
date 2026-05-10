@@ -52,26 +52,24 @@ impl ClientHandler for MyClientHandler {}
 async fn main() -> Result<()> {
     let mut args: Vec<String> = std::env::args().collect();
     let mut schema_mode = false;
+    let mut help_mode = false;
 
-    let has_help = args.iter().any(|arg| arg == "--help" || arg == "-h");
+    let has_help = args.iter().any(|arg| arg == "--help" || arg == "-h" || arg == "help");
     let has_json = args.iter().any(|arg| arg == "--json");
 
-    if has_help && has_json {
-        schema_mode = true;
-        args.retain(|arg| arg != "--help" && arg != "-h");
-    }
+    if has_help {
+        help_mode = true;
+        if has_json {
+            schema_mode = true;
+        }
 
-    // Help Forwarding for Servers
-    if !schema_mode {
-        let has_help_flag_or_cmd = args.iter().any(|arg| arg == "--help" || arg == "-h" || arg == "help");
-        if has_help_flag_or_cmd {
-            let positionals: Vec<_> = args.iter().skip(1).filter(|a| !a.starts_with('-')).collect();
-            let non_help_positionals: Vec<_> = positionals.iter().filter(|&&a| a != "help").collect();
+        let positionals: Vec<_> = args.iter().skip(1).filter(|a| !a.starts_with('-')).collect();
+        let non_help_positionals: Vec<_> = positionals.iter().filter(|&&a| a != "help").collect();
 
-            // If exactly one positional (the server) and it's not the "list" command
-            if non_help_positionals.len() == 1 && non_help_positionals[0].as_str() != "list" {
-                args.retain(|arg| arg != "--help" && arg != "-h" && arg != "help");
-            }
+        // If at least one positional (server, and optionally tool), and it's not "list"
+        if !non_help_positionals.is_empty() && non_help_positionals[0].as_str() != "list" {
+            // Strip help args so clap can parse the server and tool without intercepting global help
+            args.retain(|arg| arg != "--help" && arg != "-h" && arg != "help");
         }
     }
 
@@ -106,13 +104,23 @@ async fn main() -> Result<()> {
             .with_context(|| format!("Server '{}' not found in config", server_name))?
             .clone();
 
-        if schema_mode {
+        if help_mode {
             if let Some(tool_name) = cli.tool {
-                extract_schema(server_config, &tool_name).await?;
+                if schema_mode {
+                    extract_schema(server_config, &tool_name).await?;
+                } else {
+                    print_tool_help(server_config, &tool_name).await?;
+                }
                 return Ok(());
             } else {
-                Cli::command().print_help()?;
-                return Ok(());
+                if schema_mode {
+                    Cli::command().print_help()?;
+                    return Ok(());
+                } else {
+                    // List tools for the server
+                    run_tool(server_config, &server_name, None, vec![], false).await?;
+                    return Ok(());
+                }
             }
         }
 
@@ -231,6 +239,7 @@ fn normalize_arguments(
         }
         map.insert("args".to_string(), serde_json::json!(flat_args));
     } else {
+        let mut positional_args = Vec::new();
         let mut i = 0;
         while i < raw_args.len() {
             let arg = &raw_args[i];
@@ -247,9 +256,13 @@ fn normalize_arguments(
             } else if let Some((k, v)) = arg.split_once('=') {
                 map.insert(k.to_string(), coerce_value(v, &schema_val, k));
             } else {
-                // Skip positional args for structured schema for now
+                positional_args.push(serde_json::Value::String(arg.to_string()));
             }
             i += 1;
+        }
+
+        if !positional_args.is_empty() {
+            map.insert("args".to_string(), serde_json::Value::Array(positional_args));
         }
     }
 
@@ -370,6 +383,53 @@ async fn extract_schema(
     Ok(())
 }
 
+async fn print_tool_help(
+    server_config: config::McpServerConfig,
+    tool_name: &str,
+) -> Result<()> {
+    let client = connect_to_server(&server_config).await?;
+
+    let tools = client
+        .request_tool_list(None)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to list tools: {}", e))?;
+
+    let tool = tools.tools.into_iter().find(|t| t.name == tool_name)
+        .with_context(|| format!("Tool '{}' not found on server", tool_name))?;
+
+    println!("Tool: {}", tool.name);
+    if let Some(desc) = tool.description {
+        println!("Description: {}", desc);
+    }
+    
+    println!("\nArguments:");
+    let schema_val = serde_json::to_value(&tool.input_schema)?;
+    if let Some(properties) = schema_val.get("properties").and_then(|p| p.as_object()) {
+        let required: Vec<String> = schema_val.get("required")
+            .and_then(|r| r.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+
+        if properties.is_empty() {
+            println!("  (No arguments)");
+        } else {
+            for (key, prop) in properties {
+                let type_str = prop.get("type").and_then(|t| t.as_str()).unwrap_or("any");
+                let desc = prop.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                let req_mark = if required.contains(key) { "(required)" } else { "(optional)" };
+                
+                println!("  --{} <{}> {} - {}", key, type_str.to_uppercase(), req_mark, desc);
+            }
+        }
+    } else {
+        println!("  (No arguments)");
+    }
+
+    client.shut_down().await.map_err(|e| anyhow::anyhow!("Failed to shut down client: {}", e))?;
+
+    Ok(())
+}
+
 async fn connect_to_server(
     server_config: &config::McpServerConfig,
 ) -> Result<Arc<mcp_client::ClientRuntime>> {
@@ -445,6 +505,30 @@ mod tests {
         assert_eq!(normalized.get("name").unwrap(), "foo");
         assert_eq!(normalized.get("count").unwrap(), 42);
         assert_eq!(normalized.get("active").unwrap(), true);
+    }
+
+    #[test]
+    fn test_normalize_structured_with_positional() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" }
+            }
+        });
+        let tool = mock_tool(schema);
+
+        let raw_args = vec![
+            "--name".to_string(), "foo".to_string(),
+            "positional1".to_string(),
+            "positional2".to_string()
+        ];
+        let normalized = normalize_arguments(&tool, &raw_args).unwrap();
+
+        assert_eq!(normalized.get("name").unwrap(), "foo");
+        let args = normalized.get("args").unwrap().as_array().unwrap();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], "positional1");
+        assert_eq!(args[1], "positional2");
     }
 
     #[test]
