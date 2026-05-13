@@ -64,7 +64,7 @@ mcpx-rust <server_name> <tool_name> [args...]
 - **GNU-style flags**: `--key value` or `--flag`
 - **Key-Value pairs**: `key=value`
 - **Positional arguments**: Passed to the tool as a list (useful for servers that handle unstructured input or for extra validation).
-- **JSON coercion**: Values like `true`, `false`, and numbers are automatically converted to their JSON primitives.
+- **Schema-Aware Coercion**: Values are automatically converted to JSON primitives (booleans, numbers) based on the server's schema. If no schema is available, the tool is conservative and defaults to strings for ambiguous identifiers like `"1.1"` while still supporting explicit JSON objects and arrays.
 - **Flat Server Support**: Automatically detects servers that expect a flat list of arguments (like `args: ["key=value"]`) and maps your flags accordingly.
 
 Example:

@@ -186,10 +186,11 @@ fn coerce_value(value: &str, schema: &serde_json::Value, key: &str) -> serde_jso
     if let Some(prop_schema) = prop_schema {
         let type_str = prop_schema.get("type").and_then(|t| t.as_str());
         match type_str {
+            Some("string") => serde_json::Value::String(value.to_string()),
             Some("boolean") => match value.to_lowercase().as_str() {
                 "true" | "yes" | "1" => serde_json::Value::Bool(true),
                 "false" | "no" | "0" => serde_json::Value::Bool(false),
-                _ => serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.to_string())),
+                _ => serde_json::Value::String(value.to_string()),
             },
             Some("number") | Some("integer") => {
                 if let Ok(n) = value.parse::<i64>() {
@@ -203,7 +204,20 @@ fn coerce_value(value: &str, schema: &serde_json::Value, key: &str) -> serde_jso
             _ => serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.to_string())),
         }
     } else {
-        serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.to_string()))
+        // If no schema is found, be conservative.
+        // Only auto-coerce if it's explicitly a JSON object, array, or boolean.
+        // Don't guess on numbers because they might be IDs or versions.
+        if (value.starts_with('{') && value.ends_with('}'))
+            || (value.starts_with('[') && value.ends_with(']'))
+        {
+            serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.to_string()))
+        } else if value.to_lowercase() == "true" {
+            serde_json::Value::Bool(true)
+        } else if value.to_lowercase() == "false" {
+            serde_json::Value::Bool(false)
+        } else {
+            serde_json::Value::String(value.to_string())
+        }
     }
 }
 
@@ -577,6 +591,35 @@ mod tests {
 
         assert_eq!(normalized.get("key1").unwrap(), "val1");
         assert_eq!(normalized.get("key2").unwrap(), "val2");
+    }
+
+    #[test]
+    fn test_coercion_bug_reproduction() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "taskId": { "type": "string" },
+                "version": { "type": "string" }
+            }
+        });
+        let tool = mock_tool(schema);
+
+        // Case 1: Schema specifies string, but value looks like a float
+        let raw_args = vec!["--taskId".to_string(), "1.1".to_string()];
+        let normalized = normalize_arguments(&tool, &raw_args).unwrap();
+        assert!(normalized.get("taskId").unwrap().is_string(), "Should be string when schema says so");
+        assert_eq!(normalized.get("taskId").unwrap(), "1.1");
+
+        // Case 2: No schema for a key, value looks like a float
+        let raw_args_no_schema = vec!["--unknownId".to_string(), "2.2".to_string()];
+        let normalized_no_schema = normalize_arguments(&tool, &raw_args_no_schema).unwrap();
+        assert!(normalized_no_schema.get("unknownId").unwrap().is_string(), "Should default to string for unknown keys even if it looks like a float");
+        assert_eq!(normalized_no_schema.get("unknownId").unwrap(), "2.2");
+
+        // Case 3: No schema, but explicit JSON object
+        let raw_args_json = vec!["--data".to_string(), "{\"key\":\"val\"}".to_string()];
+        let normalized_json = normalize_arguments(&tool, &raw_args_json).unwrap();
+        assert!(normalized_json.get("data").unwrap().is_object(), "Should still parse explicit JSON objects");
     }
 }
 
